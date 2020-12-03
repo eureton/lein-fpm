@@ -141,22 +141,27 @@
   [project options]
   (let [command-strings (concat ["fpm"]
                                 (flatten (fpm-options project options))
-                                (parameters project))
-        {:keys [exit out err]} (apply shell/sh command-strings)]
-    (when-not (empty? out)
-      (println (string/trim-newline out)))
-    (when-not (empty? err)
-      (warnln (string/trim-newline err)))
-    (when (pos? exit)
-      (warnln "Failed to build package!")
-      (System/exit exit))
-    (package-path project (:type options))))
+                                (parameters project))]
+    (if (:dry-run options)
+      (println (string/join \space command-strings))
+      (let [{:keys [exit out err]} (apply shell/sh command-strings)]
+        (when-not (empty? out)
+          (println (string/trim-newline out)))
+        (when-not (empty? err)
+          (warnln (string/trim-newline err)))
+        (when (pos? exit)
+          (warnln "Failed to build package!")
+          (System/exit exit))
+        (package-path project (:type options))))))
 
 (def cli-options
   [["-d" "--pkg-dependency PKG"
     "comma-separated list of packages it depends on"
     :id :package-dependencies
-    :default-desc "depends on type, see below"]])
+    :default-desc "depends on type, see below"]
+   [nil "--dry-run"
+    "print the fpm command to stdout instead of running it"
+    :default false]])
 
 (defn usage
   "Combines the usage text of the plugin and its options into a single string."
