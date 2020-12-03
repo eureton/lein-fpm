@@ -140,23 +140,26 @@
   (binding [*out* *err*]
     (println message)))
 
+(defn fpm-command-strings
+  "Returns the fpm command as a sequence of tokens."
+  [project options]
+  (concat ["fpm"]
+          (flatten (fpm-options project options))
+          (parameters project)))
+
 (defn package
   "Invokes fpm to build the package and returns the resulting path."
   [project options]
-  (let [command-strings (concat ["fpm"]
-                                (flatten (fpm-options project options))
-                                (parameters project))]
-    (if (:dry-run options)
-      (println (string/join \space command-strings))
-      (let [{:keys [exit out err]} (apply shell/sh command-strings)]
-        (when-not (empty? out)
-          (println (string/trim-newline out)))
-        (when-not (empty? err)
-          (warnln (string/trim-newline err)))
-        (when (pos? exit)
-          (warnln "Failed to build package!")
-          (System/exit exit))
-        (package-path project (:type options))))))
+  (let [command-strings (fpm-command-strings project options)
+        {:keys [exit out err]} (apply shell/sh command-strings)]
+    (when-not (empty? out)
+      (println (string/trim-newline out)))
+    (when-not (empty? err)
+      (warnln (string/trim-newline err)))
+    (when (pos? exit)
+      (warnln "Failed to build package!")
+      (System/exit exit))
+    (package-path project (:type options))))
 
 (def cli-options
   [["-d" "--pkg-dependency PKG"
@@ -246,6 +249,10 @@
   ([project] (fpm project "deb"))
   ([project & args]
    (let [{:keys [options exit-message ok?]} (validate-args args)]
-     (if exit-message
-       (exit-with-message (if ok? 0 1) exit-message)
-       (build project options)))))
+     (when exit-message
+       (exit-with-message (if ok? 0 1) exit-message))
+     (when (:dry-run options)
+       (exit-with-message
+         0
+         (string/join \space (fpm-command-strings project options))))
+     (build project options))))
