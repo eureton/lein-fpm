@@ -4,6 +4,8 @@
     [clojure.java.io :as io]
     [clojure.java.shell :as shell]
     [me.raynes.fs :as fs]
+    [leiningen.core.project :as project]
+    [clojure.tools.cli :refer [parse-opts]]
     [leiningen.uberjar :as uberjar]))
 
 (defn- jar-file-name
@@ -86,28 +88,33 @@
         _ (spit file contents)]
     file))
 
-(defn- jdk-dependency
-  "The JDK package name and version for the provided package type."
+(defn- default-dependencies
+  "Default package dependencies for the provided package type."
   [package-type]
   (condp = package-type
     "deb" "openjdk-7-jre-headless"
     "rpm" "java-1.7.0-openjdk"
     "solaris" "jdk-7"))
 
-(defn- options
+(defn- fpm-options
   "The options to be passed to fpm. Returns a vector of vectors instead of a
   map to support multiple instances of the same option."
-  [project package-type]
+  [project options]
   [["-s" "dir"]
-   ["-t" package-type]
+   ["-t" (:type options)]
    ["--force"]
    ["-a" "all"]
-   ["-p" (str (package-path project package-type))]
+   ["-p" (str (package-path project (:type options)))]
    ["-n" (:name project)]
    ["-v" (:version project)]
    ["--url" (:url project)]
    ["--description" (:description project)]
-   ["-d" (jdk-dependency package-type)]
+   ; TODO replace with :multi true cli parser configuration, when available
+   (map
+     #(vector "-d" %)
+     (string/split
+       (:package-dependencies options (default-dependencies (:type options)))
+       #","))
    ["--rpm-os" "linux"]])
 
 (defn- parameters
@@ -131,9 +138,9 @@
 
 (defn package
   "Invokes fpm to build the package and returns the resulting path."
-  [project package-type]
+  [project options]
   (let [command-strings (concat ["fpm"]
-                                (flatten (options project package-type))
+                                (flatten (fpm-options project options))
                                 (parameters project))
         {:keys [exit out err]} (apply shell/sh command-strings)]
     (when-not (empty? out)
@@ -143,17 +150,89 @@
     (when (pos? exit)
       (warnln "Failed to build package!")
       (System/exit exit))
-    (package-path project package-type)))
+    (package-path project (:type options))))
+
+(def cli-options
+  [["-d" "--pkg-dependency PKG"
+    "comma-separated list of packages it depends on"
+    :id :package-dependencies
+    :default-desc "depends on type, see below"]])
+
+(defn usage
+  "Combines the usage text of the plugin and its options into a single string."
+  [options-summary]
+  (->> ["Usage: lein fpm [options] type"
+        ""
+        "Options:"
+        options-summary
+        ""
+        "Types:"
+        "  deb       Create a Debian package (default)"
+        "  rpm       Create an RPM package"
+        "  solaris   Create a Solaris package"
+        ""
+        "Default package dependencies:"
+        "  deb       default-jre"
+        "  rpm       java-1.7.0-openjdk"
+        "  solaris   jdk-7"]
+       (string/join \newline)))
+
+(defn error-msg
+  "Turns clojure.tools.cli errors into a single error message."
+  [errors]
+  (str
+    "The following errors occurred while parsing your command:\n\n"
+    (string/join \newline errors)))
+
+(defn validate-args
+  "Validates command-line arguments and returns a map:
+    * either indicating that the task should exit
+      {:exit-message msg :ok? [true|false]}
+    * or containing the provided information
+      {:options {:type TYPE :package-dependencies DEPS ...}}"
+  [args]
+  (let [{:keys [options arguments errors summary]} (parse-opts args cli-options)
+        package-type (first arguments)
+        usage-summary (usage summary)]
+    (cond
+      (= package-type "help")
+      {:exit-message usage-summary :ok? true}
+
+      errors
+      {:exit-message (error-msg errors) :ok? false}
+
+      (and
+        (= 1 (count arguments))
+        (#{"deb" "rpm" "solaris"} package-type))
+      {:options (assoc options :type package-type)}
+
+      :else
+      {:exit-message usage-summary})))
+
+(defn exit
+  "Prints to stderr and exits with the given code."
+  [code message]
+  (warnln message)
+  (System/exit code))
+
+(defn build
+  "Generates the package for the given project and options."
+  [project options]
+  (let [project (project/set-profiles project [:uberjar])]
+    (println "Creating uberjar")
+    (uberjar/uberjar project)
+    (println "Creating wrapper binary")
+    (wrapper-binary project)
+    (println "Creating upstart script")
+    (upstart-script project)
+    (println "Building package")
+    (package project options)))
 
 (defn fpm
   "Generates a minimalist package for the current project."
   ([project] (fpm project "deb"))
-  ([project package-type & args]
-   (println "Creating uberjar")
-   (uberjar/uberjar project)
-   (println "Creating wrapper binary")
-   (wrapper-binary project)
-   (println "Creating upstart script")
-   (upstart-script project)
-   (println "Building package")
-   (package project package-type)))
+  ([project & args]
+   (let [{:keys [options exit-message ok?]} (validate-args args)]
+     (if exit-message
+       (exit (if ok? 0 1) exit-message)
+       (build project options)))))
