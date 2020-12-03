@@ -209,10 +209,10 @@
       :else
       {:exit-message usage-summary})))
 
-(defn exit
+(defn exit-with-message
   "Prints to stderr and exits with the given code."
   [code message]
-  (warnln message)
+  ((if (= code 0) println warnln) message)
   (System/exit code))
 
 (defn build
@@ -234,5 +234,5 @@
   ([project & args]
    (let [{:keys [options exit-message ok?]} (validate-args args)]
      (if exit-message
-       (exit (if ok? 0 1) exit-message)
+       (exit-with-message (if ok? 0 1) exit-message)
        (build project options)))))
