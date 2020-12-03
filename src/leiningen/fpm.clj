@@ -100,22 +100,26 @@
   "The options to be passed to fpm. Returns a vector of vectors instead of a
   map to support multiple instances of the same option."
   [project options]
-  [["-s" "dir"]
-   ["-t" (:type options)]
-   ["--force"]
-   ["-a" "all"]
-   ["-p" (str (package-path project (:type options)))]
-   ["-n" (:name project)]
-   ["-v" (:version project)]
-   ["--url" (:url project)]
-   ["--description" (:description project)]
-   ; TODO replace with :multi true cli parser configuration, when available
-   (map
-     #(vector "-d" %)
-     (string/split
-       (:package-dependencies options (default-dependencies (:type options)))
-       #","))
-   ["--rpm-os" "linux"]])
+  (let [maintainer (:maintainer options)]
+    (->>
+      [["-s" "dir"]
+       ["-t" (:type options)]
+       (when maintainer ["-m" maintainer])
+       ["--force"]
+       ["-a" "all"]
+       ["-p" (str (package-path project (:type options)))]
+       ["-n" (:name project)]
+       ["-v" (:version project)]
+       ["--url" (:url project)]
+       ["--description" (:description project)]
+       ; TODO replace with :multi true cli parser configuration, when available
+       (map
+         #(vector "-d" %)
+         (string/split
+           (:package-dependencies options (default-dependencies (:type options)))
+           #","))
+       ["--rpm-os" "linux"]]
+      (remove nil?))))
 
 (defn- parameters
   "The parameters to be passed to fpm."
@@ -159,6 +163,10 @@
     "comma-separated list of packages it depends on"
     :id :package-dependencies
     :default-desc "depends on type, see below"]
+   ["-m" "--maintainer EMAIL"
+    "email of maintainer to mark package with"
+    :validate-fn #(re-matches #"^[^@\s]+@[^@\s]+\.[^@\s]+$" %)
+    :validate-msg "must be a valid email address"]
    [nil "--dry-run"
     "print the fpm command to stdout instead of running it"
     :default false]])
